@@ -2,26 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { Upload, Image as ImageIcon, Sparkles, Download, Settings, RefreshCw, Share2, Instagram, Wand2, Layers, Loader2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const InstaCreator = () => {
-  // --- SEKCJA KLUCZA API (Dostosowana pod Netlify i Localhost) ---
+  // --- KONFIGURACJA KLUCZA API ---
+  // Zabezpieczamy odczyt klucza, aby kod działał w każdym środowisku (Podgląd vs Produkcja)
+  let defaultApiKey = '';
   
-  // Próbujemy pobrać klucz z bezpiecznego magazynu (zmiennych środowiskowych)
-  // Zastosowano zabezpieczenie (try-catch), aby kod nie wybuchł w podglądzie tutaj,
-  // a działał poprawnie u Ciebie na komputerze i na Netlify.
-  let envApiKey = '';
   try {
-    // To jest linia, która "gada" z Netlify:
+    // Ta sekcja zadziała na Twoim komputerze i Netlify (Vite)
     if (typeof import.meta !== 'undefined' && import.meta.env) {
-      envApiKey = import.meta.env.VITE_GOOGLE_API_KEY || '';
+      defaultApiKey = import.meta.env.VITE_GOOGLE_API_KEY || '';
     }
   } catch (e) {
-    // Ignorujemy błędy w środowiskach testowych
-    console.log('Environment variables not accessible');
+    // Ten blok zadziała w podglądzie tutaj, zapobiegając błędom
+    console.log('Tryb podglądu: Zmienne środowiskowe niedostępne.');
   }
-
-  const defaultApiKey = envApiKey;
   
-  // --------------------------------------------------------------
-
   const [apiKey, setApiKey] = useState(defaultApiKey);
   const [uploadedImage, setUploadedImage] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -32,14 +26,13 @@ const InstaCreator = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Jeśli klucz załadował się z Netlify, zaktualizuj stan aplikacji
+  // Aktualizacja stanu, jeśli klucz załaduje się z opóźnieniem
   useEffect(() => {
-    if (defaultApiKey) {
+    if (defaultApiKey && !apiKey) {
       setApiKey(defaultApiKey);
     }
   }, [defaultApiKey]);
 
-  // Style predefiniowane
   const styles = [
     { id: 'minimalist', name: 'Minimalizm', prompt: 'clean, minimal background, soft lighting, pastel colors, high end product photography', color: 'bg-gray-100' },
     { id: 'nature', name: 'Natura', prompt: 'placed on a rock with moss, forest background, sunlight filtering through trees, cinematic bokeh', color: 'bg-green-100' },
@@ -80,6 +73,7 @@ const InstaCreator = () => {
       const activeKey = apiKey || defaultApiKey;
 
       if (activeKey) {
+        // Używamy endpointu Imagen 3 (Beta)
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${activeKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -90,8 +84,9 @@ const InstaCreator = () => {
         });
 
         if (!response.ok) {
-           const errData = await response.json();
-           throw new Error(errData.error?.message || 'Błąd API Google');
+           const errData = await response.json().catch(() => ({})); // Zabezpieczenie przed pustym błędem
+           const serverMessage = errData.error?.message || errData.error?.status || response.statusText;
+           throw new Error(`API Error (${response.status}): ${serverMessage}`);
         }
         
         const data = await response.json();
@@ -99,11 +94,11 @@ const InstaCreator = () => {
              const imageUrl = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
              setGeneratedImage(imageUrl);
         } else {
-            throw new Error('API nie zwróciło poprawnego obrazu.');
+            throw new Error('API zwróciło odpowiedź bez obrazu (Sprawdź limity lub poprawność promptu).');
         }
 
       } else {
-        // Tryb Demo
+        // Tryb Demo (gdy brak klucza)
         await new Promise(resolve => setTimeout(resolve, 2000));
         const mockKeywords = { 'minimalist': 'minimal', 'nature': 'nature', 'urban': 'urban', 'luxury': 'luxury', 'kitchen': 'food', 'podium': '3d' };
         const keyword = mockKeywords[selectedStyle] || 'product';
@@ -111,10 +106,7 @@ const InstaCreator = () => {
       }
     } catch (error) {
       console.error("Generowanie nie powiodło się:", error);
-      setErrorMsg(`Wystąpił błąd: ${error.message}. Przełączono na tryb demo.`);
-      setTimeout(() => {
-          setGeneratedImage(`https://source.unsplash.com/800x800/?aesthetic,product&sig=${Date.now()}`);
-      }, 1000);
+      setErrorMsg(`Błąd: ${error.message}`);
     } finally {
       setIsGenerating(false);
     }
@@ -237,7 +229,7 @@ const InstaCreator = () => {
               <button onClick={handleGenerate} disabled={isGenerating} className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-xl font-semibold shadow-lg shadow-purple-200 hover:shadow-xl hover:shadow-purple-300 hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
                 {isGenerating ? <><Loader2 className="animate-spin" size={20} /> Generowanie...</> : <><Sparkles size={20} /> Generuj Zdjęcie</>}
               </button>
-              {errorMsg && <div className="text-xs text-red-500 bg-red-50 p-2 rounded-lg border border-red-100 flex gap-2 items-start"><AlertCircle size={14} className="mt-0.5 shrink-0" />{errorMsg}</div>}
+              {errorMsg && <div className="text-xs text-red-500 bg-red-50 p-2 rounded-lg border border-red-100 flex gap-2 items-start overflow-hidden break-words"><AlertCircle size={14} className="mt-0.5 shrink-0" /><span>{errorMsg}</span></div>}
             </div>
           </div>
         </div>
