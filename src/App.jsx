@@ -1,86 +1,81 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Sparkles, Download, Settings, RefreshCw, Share2, Instagram, Wand2, Layers, Loader2, X, AlertCircle, CheckCircle2, ScanSearch, Copy } from 'lucide-react';
+import { Upload, Image as ImageIcon, Sparkles, Download, Settings, RefreshCw, Layers, Loader2, X, AlertCircle, CheckCircle2, ScanSearch, Copy, Move, Eraser, Wand2 } from 'lucide-react';
 
 const InstaCreator = () => {
   // --- KONFIGURACJA ---
-  // Zabezpieczony odczyt klucza API (działa na Netlify i w podglądzie)
   let defaultApiKey = '';
   try {
     if (import.meta && import.meta.env) {
       defaultApiKey = import.meta.env.VITE_GOOGLE_API_KEY || '';
     }
-  } catch (e) {
-    console.warn('Preview mode: env vars not accessible');
-  }
+  } catch (e) { console.warn('Preview mode'); }
   
   const [apiKey, setApiKey] = useState(defaultApiKey);
   const [uploadedImage, setUploadedImage] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   
   // Stany procesu
-  const [isAnalyzing, setIsAnalyzing] = useState(false); // Nowy stan dla OCR/Vision
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatorSource, setGeneratorSource] = useState('google'); // 'google' | 'pollinations'
   
   // Dane wyjściowe
-  const [generatedImage, setGeneratedImage] = useState(null);
-  const [analysisResult, setAnalysisResult] = useState(null); // Wynik skanowania produktu
-  const [postCaption, setPostCaption] = useState(''); // Treść posta dla notato.pl
+  const [backgroundImage, setBackgroundImage] = useState(null); 
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [postCaption, setPostCaption] = useState('');
+  
+  // Ustawienia kompozycji
+  const [productScale, setProductScale] = useState(70);
+  const [productY, setProductY] = useState(50);
+  const [removeWhiteBg, setRemoveWhiteBg] = useState(true); 
   
   const [prompt, setPrompt] = useState('');
   const [selectedStyle, setSelectedStyle] = useState('minimalist');
   const [errorMsg, setErrorMsg] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
 
-  // Aktualizacja klucza
   useEffect(() => {
     if (defaultApiKey && !apiKey) setApiKey(defaultApiKey);
   }, [defaultApiKey]);
 
-  // --- NOWE STYLE DLA NOTATO.PL ---
-  // Zoptymalizowane pod kątem zachowania wierności produktu i estetyki "stationery"
   const styles = [
     { 
       id: 'minimalist', 
       name: 'Clean Desk', 
-      prompt: 'high-end stationery photography, clean white desk setup, soft natural window lighting, minimalist aesthetic, centered product, sharp focus, 8k, highly detailed texture', 
+      prompt: 'top down view of a clean white desk, empty center area, soft natural window lighting, minimalist aesthetic, high quality texture, 8k', 
       color: 'bg-gray-100' 
     },
     { 
       id: 'warm', 
-      name: 'Cozy Planning', 
-      prompt: 'warm cozy atmosphere, wooden desk surface, soft morning sunlight, coffee cup nearby (blurred), lifestyle photography, golden hour lighting, product in focus', 
+      name: 'Cozy Wood', 
+      prompt: 'top down view of a wooden table surface, warm cozy atmosphere, soft morning sunlight, blurred coffee cup in corner, empty center, lifestyle photography', 
       color: 'bg-orange-50' 
     },
     { 
-      id: 'business', 
-      name: 'Professional', 
-      prompt: 'sleek modern office environment, glass and metal accents, cool toned lighting, professional business look, depth of field, sharp product details', 
+      id: 'concrete', 
+      name: 'Urban Concrete', 
+      prompt: 'top down view of grey concrete surface, sharp texture, modern minimalist shadow, harsh lighting, empty center for product placement', 
       color: 'bg-slate-200' 
     },
     { 
       id: 'nature', 
       name: 'Botanical', 
-      prompt: 'placed on natural stone surface, surrounded by green eucalyptus leaves, soft shadows, organic feel, fresh, eco-friendly vibe, bright lighting', 
+      prompt: 'flatlay background with green eucalyptus leaves on edges, white stone surface, soft shadows, organic feel, empty center, bright lighting', 
       color: 'bg-green-100' 
     },
     { 
       id: 'dark', 
       name: 'Elegant Dark', 
-      prompt: 'dark moody aesthetic, black matte surface, dramatic lighting, elegant shadows, premium luxury feel, gold accents highlighted', 
+      prompt: 'dark black matte texture background, dramatic spotlight, elegant shadows, premium luxury feel, gold dust accents on edges, empty center', 
       color: 'bg-slate-800 text-white' 
     },
     { 
-      id: 'flatlay', 
-      name: 'Creative Flatlay', 
-      prompt: 'knolling photography style, organized flatlay on pastel background, surrounded by pens and clips, perfectly aligned, geometric composition, top-down view', 
+      id: 'marble', 
+      name: 'Marble Luxury', 
+      prompt: 'white carrara marble surface background, expensive look, soft reflections, bright studio lighting, empty center', 
       color: 'bg-purple-100' 
     },
   ];
-
-  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
-  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
-  const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); const file = e.dataTransfer.files[0]; handleFile(file); };
-  const handleFileInput = (e) => { const file = e.target.files[0]; handleFile(file); };
 
   const handleFile = (file) => {
     if (file && file.type.startsWith('image/')) {
@@ -88,25 +83,30 @@ const InstaCreator = () => {
       reader.onload = (e) => {
         const base64 = e.target.result;
         setUploadedImage(base64);
-        setGeneratedImage(null);
+        setBackgroundImage(null);
         setAnalysisResult(null);
         setPostCaption('');
         setErrorMsg('');
         
-        // Automatyczne uruchomienie analizy po wgraniu
+        // Tymczasowe tło
+        setBackgroundImage('https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2029&auto=format&fit=crop');
+
         analyzeProduct(base64, apiKey || defaultApiKey);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // --- FUNKCJA 1: SKANOWANIE PRODUKTU (GEMINI VISION) ---
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+  const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); const file = e.dataTransfer.files[0]; handleFile(file); };
+  const handleFileInput = (e) => { const file = e.target.files[0]; handleFile(file); };
+
+  // --- 1. ANALIZA (OCR/GEMINI) ---
   const analyzeProduct = async (imageBase64, key) => {
-    if (!key) return; // Bez klucza pomijamy analizę
-    
+    if (!key) return;
     setIsAnalyzing(true);
     try {
-      // Wycinamy nagłówek "data:image/png;base64,"
       const base64Data = imageBase64.split(',')[1]; 
       const mimeType = imageBase64.split(';')[0].split(':')[1];
 
@@ -116,20 +116,12 @@ const InstaCreator = () => {
         body: JSON.stringify({
           contents: [{
             parts: [
-              { text: `Jesteś ekspertem marketingu dla marki 'notato.pl' (sklep z planerami, notatnikami, akcesoriami biurowymi). 
+              { text: `Jesteś ekspertem social media marki 'notato.pl'. 
+              Przeanalizuj zdjęcie produktu.
+              1. Zaproponuj styl tła z listy (Clean Desk, Cozy Wood, Urban Concrete, Botanical, Elegant Dark, Marble Luxury) pasujący do produktu.
+              2. Napisz krótki, angażujący post na Instagram po polsku (użyj emoji).
               
-              Zadanie 1 (Opis): Przeanalizuj to zdjęcie produktu. Opisz go BARDZO szczegółowo po angielsku (kolor, faktura, napisy, kształt), tak aby generator obrazu mógł go odtworzyć w 100% identycznie. Skup się na fizycznych cechach.
-              
-              Zadanie 2 (Instagram): Napisz po polsku angażujący post na Instagram dla tego produktu. Użyj emoji. Nawiąż do organizacji, planowania, sukcesu. Oznacz @notato.pl.
-              
-              Zadanie 3 (Styl): Wybierz jeden styl z listy: [Clean Desk, Cozy Planning, Professional, Botanical, Elegant Dark, Creative Flatlay], który najlepiej pasuje do tego produktu.
-
-              Zwróć odpowiedź w formacie JSON:
-              {
-                "visualDescription": "text description...",
-                "instagramCaption": "text post...",
-                "suggestedStyle": "style name"
-              }` },
+              Zwróć TYLKO czysty JSON bez markdown: { "suggestedStyle": "style name", "instagramCaption": "text..." }` },
               { inlineData: { mimeType: mimeType, data: base64Data } }
             ]
           }]
@@ -137,64 +129,77 @@ const InstaCreator = () => {
       });
 
       const data = await response.json();
-      
-      // Bezpieczne pobieranie tekstu z odpowiedzi
-      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (!textResponse) {
-        throw new Error("Brak odpowiedzi od AI.");
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) {
+        const jsonStr = text.replace(/```json|```/g, '').trim();
+        const analysis = JSON.parse(jsonStr);
+        setAnalysisResult(analysis);
+        setPostCaption(analysis.instagramCaption);
+        const matched = styles.find(s => s.name.toLowerCase().includes(analysis.suggestedStyle.toLowerCase()));
+        if (matched) setSelectedStyle(matched.id);
       }
-      
-      // Czyszczenie JSONA (Gemini czasem dodaje ```json ... ```)
-      const jsonStr = textResponse.replace(/```json|```/g, '').trim();
-      const analysis = JSON.parse(jsonStr);
-
-      setAnalysisResult(analysis);
-      setPostCaption(analysis.instagramCaption);
-      
-      // Auto-wybór stylu
-      const matchedStyle = styles.find(s => s.name.toLowerCase().includes(analysis.suggestedStyle.toLowerCase()));
-      if (matchedStyle) setSelectedStyle(matchedStyle.id);
-
     } catch (error) {
-      console.error("Błąd analizy obrazu:", error);
-      // Nie blokujemy UI, po prostu nie mamy analizy
+      console.error(error);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // --- FUNKCJA 2: GENEROWANIE OBRAZU (POLLINATIONS) ---
-  const handleGenerate = async () => {
-    if (!uploadedImage) return;
+  // --- 2. GENEROWANIE TŁA (GOOGLE IMAGEN / POLLINATIONS FALLBACK) ---
+  const handleGenerateBackground = async () => {
     setIsGenerating(true);
-    setGeneratedImage(null);
     setErrorMsg('');
+    setGeneratorSource('google'); // Próbujemy Google najpierw
 
     const styleObj = styles.find(s => s.id === selectedStyle);
-    
-    // Używamy opisu z analizy AI jeśli dostępny, w przeciwnym razie ogólny
-    const productDescription = analysisResult?.visualDescription || "a generic product";
-    
-    // Konstrukcja Promptu "Fidelity First"
-    const fullPrompt = `
-      Product photography of ${productDescription}. 
-      Style: ${styleObj?.prompt}. 
-      Details: The product MUST look exactly like the description. Centered composition, uncropped, 100% complete item visible, sharp focus, 8k resolution, photorealistic, commercial photography.
-      ${prompt}
-    `.trim();
+    // Kluczowe dla Google Imagen: Prosimy o tło, podkreślamy pusty środek
+    const bgPrompt = `Top down view background texture only, ${styleObj?.prompt}, empty center area, no objects in center, photorealistic, 8k. ${prompt}`;
 
     try {
-      const seed = Math.floor(Math.random() * 1000000);
-      const encodedPrompt = encodeURIComponent(fullPrompt);
-      // Dodajemy parametr "enhance=false" żeby Pollinations nie zmieniało zbytnio naszego precyzyjnego opisu
-      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&width=1080&height=1080&nologo=true&model=flux&enhance=false`;
+      const activeKey = apiKey || defaultApiKey;
+      let imageUrl = null;
 
-      // Pre-loading obrazu
+      // KROK A: Próba użycia Google Imagen 3
+      if (activeKey) {
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${activeKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                instances: [{ prompt: bgPrompt }],
+                parameters: { sampleCount: 1, aspectRatio: "1:1" }
+              })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.predictions?.[0]?.bytesBase64Encoded) {
+                    imageUrl = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+                }
+            } else {
+                console.warn("Google Imagen niedostępny/błąd, przełączanie na zapasowy...");
+                throw new Error("Imagen fail"); 
+            }
+        } catch (err) {
+            // Jeśli Google zawiedzie (404/403), lecimy do Kroku B
+            setGeneratorSource('pollinations');
+        }
+      } else {
+         setGeneratorSource('pollinations');
+      }
+
+      // KROK B: Fallback do Pollinations (gdy brak klucza lub błąd Google)
+      if (!imageUrl) {
+          const seed = Math.floor(Math.random() * 1000000);
+          const encodedPrompt = encodeURIComponent(bgPrompt);
+          imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&width=1080&height=1080&nologo=true&model=flux&enhance=false`;
+      }
+
+      // KROK C: Ładowanie obrazu
       const img = new Image();
       img.src = imageUrl;
-      img.onload = () => { setGeneratedImage(imageUrl); setIsGenerating(false); };
-      img.onerror = () => { throw new Error("Błąd serwera obrazów."); };
+      img.onload = () => { setBackgroundImage(imageUrl); setIsGenerating(false); };
+      img.onerror = () => { throw new Error("Błąd ładowania obrazu."); };
 
     } catch (error) {
       setErrorMsg(`Błąd: ${error.message}`);
@@ -202,25 +207,49 @@ const InstaCreator = () => {
     }
   };
 
-  const handleDownload = async () => {
-    if (generatedImage) {
-      try {
-        const response = await fetch(generatedImage);
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `notato-post-${Date.now()}.jpg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch (e) { window.open(generatedImage, '_blank'); }
-    }
-  };
+  // --- 3. KOMPOZYCJA (ZACHOWANIE ORYGINAŁU) ---
+  const handleDownloadComposite = () => {
+    if (!uploadedImage || !backgroundImage) return;
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(postCaption);
-    alert("Treść posta skopiowana!");
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1080;
+    const ctx = canvas.getContext('2d');
+
+    const bgImg = new Image();
+    bgImg.crossOrigin = "anonymous"; // Ważne dla zewnętrznych obrazów
+    bgImg.src = backgroundImage;
+
+    bgImg.onload = () => {
+      // Rysuj tło
+      ctx.drawImage(bgImg, 0, 0, 1080, 1080);
+
+      const prodImg = new Image();
+      prodImg.src = uploadedImage;
+      prodImg.onload = () => {
+        // Skalowanie i pozycja
+        const scale = productScale / 100;
+        const w = 1080 * scale; 
+        const ratio = prodImg.width / prodImg.height;
+        const drawH = w / ratio; 
+        
+        const x = (1080 - w) / 2;
+        const y = (1080 * (productY / 100)) - (drawH / 2);
+
+        // Tryb mieszania (usuwanie białego tła)
+        if (removeWhiteBg) {
+            ctx.globalCompositeOperation = 'multiply';
+        }
+
+        ctx.drawImage(prodImg, x, y, w, drawH);
+        ctx.globalCompositeOperation = 'source-over';
+
+        const link = document.createElement('a');
+        link.download = `notato-post-${Date.now()}.jpg`;
+        link.href = canvas.toDataURL('image/jpeg', 0.9);
+        link.click();
+      };
+    };
   };
 
   return (
@@ -231,23 +260,17 @@ const InstaCreator = () => {
             <div className="bg-slate-900 p-2 rounded-lg text-white">
               <Layers size={20} />
             </div>
-            <div>
-               <h1 className="text-xl font-bold text-slate-900 tracking-tight">notato<span className="text-purple-600">.AI</span></h1>
-            </div>
+            <h1 className="text-xl font-bold text-slate-900">notato<span className="text-purple-600">.AI</span> <span className="text-xs font-normal text-slate-400 ml-1">Studio</span></h1>
           </div>
           <div className="flex items-center gap-3">
-            <div className={`text-xs font-medium px-3 py-1 rounded-full flex items-center gap-1 ${apiKey ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-               {apiKey ? <><CheckCircle2 size={12} /> System Gotowy</> : <><AlertCircle size={12} /> Tryb Demo (Brak analizy)</>}
-            </div>
-            <button onClick={() => setShowApiKey(!showApiKey)} className="p-2 hover:bg-slate-100 rounded-full"><Settings size={18} /></button>
+             <button onClick={() => setShowApiKey(!showApiKey)} className="p-2 hover:bg-slate-100 rounded-full"><Settings size={18} /></button>
           </div>
         </div>
-
         {showApiKey && (
           <div className="bg-slate-100 border-b border-slate-200 p-4">
             <div className="max-w-6xl mx-auto flex gap-4">
               <input type="password" placeholder="Klucz Google Gemini API..." className="flex-1 px-4 py-2 rounded-md border" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-              <button onClick={() => setShowApiKey(false)} className="px-4 py-2 bg-slate-800 text-white rounded-md">Zamknij</button>
+              <button onClick={() => setShowApiKey(false)} className="px-4 py-2 bg-slate-800 text-white rounded-md">Zapisz</button>
             </div>
           </div>
         )}
@@ -255,154 +278,142 @@ const InstaCreator = () => {
 
       <main className="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* LEWA KOLUMNA - INPUT */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* LEWA KOLUMNA - KONFIGURACJA */}
+        <div className="lg:col-span-4 space-y-6">
           
-          {/* 1. Upload & OCR */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-               <div className="flex items-center gap-2 font-semibold text-slate-700">
-                  <ScanSearch className="text-purple-600" size={18} /> 
-                  1. Skanowanie Produktu
-               </div>
-               {isAnalyzing && <span className="text-xs text-purple-600 animate-pulse flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Analiza AI...</span>}
-            </div>
-            <div className="p-6">
-              {!uploadedImage ? (
+          {/* 1. Upload */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+             <h2 className="font-semibold text-slate-700 mb-4 flex items-center gap-2"><ScanSearch size={18} className="text-purple-600"/> 1. Produkt</h2>
+             {!uploadedImage ? (
                 <div 
                   onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-xl h-64 flex flex-col items-center justify-center transition-all duration-200 ${isDragging ? 'border-purple-500 bg-purple-50' : 'border-slate-200 hover:border-purple-400 hover:bg-slate-50'}`}
+                  className={`border-2 border-dashed rounded-xl h-40 flex flex-col items-center justify-center transition-all cursor-pointer ${isDragging ? 'border-purple-500 bg-purple-50' : 'border-slate-200 hover:bg-slate-50'}`}
                 >
-                  <Upload className="text-slate-400 mb-4" size={32} />
-                  <p className="text-slate-600 font-medium">Wgraj zdjęcie produktu</p>
-                  <p className="text-xs text-slate-400 mt-2 text-center max-w-[200px]">AI automatycznie rozpozna produkt i zaproponuje treść.</p>
-                  <label className="cursor-pointer mt-4">
-                    <span className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">Wybierz plik</span>
+                  <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer">
+                    <Upload className="text-slate-400 mb-2" size={24} />
+                    <span className="text-sm font-medium text-slate-600">Wgraj Packshot</span>
                     <input type="file" className="hidden" accept="image/*" onChange={handleFileInput} />
                   </label>
                 </div>
-              ) : (
-                <div className="relative group rounded-xl overflow-hidden border border-slate-200 bg-checkerboard">
-                  <style>{`.bg-checkerboard { background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 10px 10px; }`}</style>
-                  <img src={uploadedImage} alt="Uploaded" className="w-full h-64 object-contain mx-auto" />
-                  <button onClick={() => { setUploadedImage(null); setAnalysisResult(null); }} className="absolute top-2 right-2 p-1.5 bg-white/90 text-slate-700 rounded-full shadow-md hover:text-red-500"><X size={16} /></button>
-                  
-                  {analysisResult && (
-                    <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm p-3 border-t border-slate-100">
-                       <div className="flex items-start gap-2">
-                          <CheckCircle2 size={16} className="text-green-600 mt-0.5 shrink-0" />
-                          <div>
-                            <p className="text-xs font-bold text-slate-800">Rozpoznano:</p>
-                            <p className="text-xs text-slate-600 line-clamp-2">{analysisResult.visualDescription}</p>
-                          </div>
-                       </div>
-                    </div>
-                  )}
+             ) : (
+                <div className="relative rounded-lg overflow-hidden border border-slate-200">
+                   <img src={uploadedImage} className="h-40 w-full object-contain bg-checkerboard" alt="preview"/>
+                   <button onClick={() => setUploadedImage(null)} className="absolute top-1 right-1 bg-white p-1 rounded-full shadow hover:text-red-500"><X size={14}/></button>
+                   {isAnalyzing && <div className="absolute inset-0 bg-white/80 flex items-center justify-center text-xs font-medium text-purple-600"><Loader2 className="animate-spin mr-1" size={12}/> Analiza AI...</div>}
                 </div>
-              )}
-            </div>
+             )}
           </div>
 
-          {/* 2. Konfiguracja */}
-          <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 transition-opacity duration-300 ${!uploadedImage ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
-            <div className="p-4 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
-              <Wand2 className="text-purple-600" size={18} />
-              <h2 className="font-semibold text-slate-700">2. Wybierz Scenerię</h2>
-            </div>
-            <div className="p-6 space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-3 flex justify-between">
-                   Styl
-                   {analysisResult && <span className="text-xs text-purple-600 font-normal">Sugerowany: {analysisResult.suggestedStyle}</span>}
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {styles.map((style) => (
-                    <button key={style.id} onClick={() => setSelectedStyle(style.id)} className={`relative p-3 rounded-xl border text-left transition-all duration-200 ${selectedStyle === style.id ? 'border-purple-500 bg-purple-50 ring-1 ring-purple-500' : 'border-slate-200 hover:border-slate-300'}`}>
-                      <div className={`w-full h-2 rounded-full mb-2 ${style.color}`}></div>
-                      <span className={`text-sm font-medium block ${selectedStyle === style.id ? 'text-purple-900' : 'text-slate-600'}`}>{style.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="bg-amber-50 p-3 rounded-lg border border-amber-100 text-xs text-amber-800">
-                 <strong>Wskazówka:</strong> Aby produkt na zdjęciu był w 100% identyczny, AI wykorzystuje precyzyjny opis z analizy OCR. Wynik może być "kreatywną interpretacją" w wysokiej jakości.
-              </div>
-
-              <button onClick={handleGenerate} disabled={isGenerating || isAnalyzing} className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold shadow-lg hover:bg-slate-800 hover:scale-[1.01] transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                {isGenerating ? <><Loader2 className="animate-spin" size={20} /> Renderowanie...</> : <><Sparkles size={20} /> Generuj Zdjęcie</>}
-              </button>
-              {errorMsg && <div className="text-xs text-red-500 p-2 bg-red-50 rounded border border-red-100">{errorMsg}</div>}
-            </div>
-          </div>
-        </div>
-
-        {/* PRAWA KOLUMNA - WYNIK */}
-        <div className="lg:col-span-7 space-y-6">
-          
-          {/* Podgląd Graficzny */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2"><ImageIcon className="text-slate-600" size={18} /><h2 className="font-semibold text-slate-700">Podgląd Instagram</h2></div>
-              {generatedImage && <button onClick={handleDownload} className="text-xs font-medium px-3 py-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800 flex gap-2 items-center"><Download size={12}/> Pobierz JPG</button>}
-            </div>
-            
-            <div className="bg-slate-100 p-8 flex items-center justify-center min-h-[400px]">
-              {!uploadedImage && !generatedImage && <div className="text-center text-slate-400"><Instagram size={48} className="mx-auto opacity-20 mb-2" /><p>Tutaj pojawi się Twoje zdjęcie</p></div>}
-              
-              {isGenerating && <div className="text-center animate-pulse"><div className="w-64 h-64 bg-slate-200 rounded-lg mx-auto mb-4"></div><p className="text-slate-500 font-medium">AI tworzy sesję zdjęciową...</p></div>}
-              
-              {generatedImage && !isGenerating && (
-                <div className="bg-white p-4 pb-6 rounded shadow-xl max-w-sm w-full animate-in fade-in zoom-in-95 duration-500">
-                   <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden border border-slate-300"><img src="https://api.dicebear.com/7.x/initials/svg?seed=NP&backgroundColor=1e293b" alt="logo" /></div>
-                        <span className="text-sm font-semibold">notato.pl</span>
-                      </div>
-                      <Settings size={16} className="text-slate-300" />
-                   </div>
-                   <div className="aspect-square bg-slate-100 rounded overflow-hidden mb-4 relative group">
-                      <img src={generatedImage} alt="Generated" className="w-full h-full object-cover" />
-                   </div>
-                   <div className="flex gap-4 text-slate-800 mb-3">
-                      <Instagram size={24} />
-                      <Share2 size={24} className="rotate-12" />
-                   </div>
-                   <div className="text-sm">
-                      <p className="font-semibold mb-1">243 polubień</p>
-                      <p className="text-slate-600"><span className="font-semibold text-slate-900 mr-1">notato.pl</span> 
-                        {postCaption ? postCaption.split(' ').slice(0, 8).join(' ') + '...' : 'Nowość w ofercie! ✨ #planowanie'}
-                      </p>
-                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Podgląd Tekstowy (Copywriting) */}
-          {postCaption && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in slide-in-from-bottom-4">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-purple-50/50">
-                <div className="flex items-center gap-2 text-purple-900 font-semibold">
-                   <Sparkles size={16} /> Propozycja Treści Posta (AI)
-                </div>
-                <button onClick={copyToClipboard} className="text-xs text-purple-700 hover:text-purple-900 flex items-center gap-1 font-medium"><Copy size={12} /> Kopiuj</button>
-              </div>
-              <div className="p-6">
-                 <textarea 
-                    className="w-full h-32 text-sm text-slate-600 bg-transparent border-none resize-none focus:ring-0 p-0" 
-                    value={postCaption} 
-                    readOnly
-                 />
-                 <div className="mt-2 pt-3 border-t border-slate-100 flex gap-2 flex-wrap">
-                    {['#notato', '#planowanie', '#organizacja', '#biuro'].map(tag => (
-                      <span key={tag} className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full">{tag}</span>
-                    ))}
+          {/* 2. Styl Tła */}
+          <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 p-4 transition-opacity ${!uploadedImage ? 'opacity-50 pointer-events-none' : ''}`}>
+             <h2 className="font-semibold text-slate-700 mb-4 flex items-center gap-2"><Wand2 size={18} className="text-purple-600"/> 2. Styl Tła</h2>
+             <div className="grid grid-cols-2 gap-2 mb-4">
+                {styles.map(s => (
+                   <button key={s.id} onClick={() => setSelectedStyle(s.id)} className={`p-2 text-xs rounded-lg border text-left flex items-center gap-2 ${selectedStyle === s.id ? 'border-purple-500 bg-purple-50' : 'border-slate-100'}`}>
+                      <div className={`w-3 h-3 rounded-full ${s.color}`}></div> {s.name}
+                   </button>
+                ))}
+             </div>
+             <button onClick={handleGenerateBackground} disabled={isGenerating} className="w-full py-3 bg-slate-900 text-white rounded-lg text-sm font-medium shadow-lg hover:bg-slate-800 flex justify-center items-center gap-2">
+                {isGenerating ? <Loader2 className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                {backgroundImage ? 'Generuj Nowe Tło' : 'Generuj Tło'}
+             </button>
+             {generatorSource === 'pollinations' && backgroundImage && !isGenerating && (
+                 <div className="mt-2 text-[10px] text-amber-600 bg-amber-50 p-2 rounded border border-amber-100 flex gap-2">
+                     <AlertCircle size={12} className="shrink-0 mt-0.5"/>
+                     Twoje klucz API Google nie obsługuje jeszcze generowania obrazów (Błąd 404). Użyto zapasowego generatora.
                  </div>
-              </div>
+             )}
+          </div>
+
+          {/* 3. Dopasowanie */}
+          {uploadedImage && (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+               <h2 className="font-semibold text-slate-700 mb-4 flex items-center gap-2"><Move size={18} className="text-purple-600"/> 3. Dopasuj Produkt</h2>
+               
+               <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-500 flex justify-between mb-1">Wielkość <span>{productScale}%</span></label>
+                    <input type="range" min="10" max="150" value={productScale} onChange={e=>setProductScale(Number(e.target.value))} className="w-full accent-purple-600 h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer"/>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 flex justify-between mb-1">Pozycja Pionowa</label>
+                    <input type="range" min="0" max="100" value={productY} onChange={e=>setProductY(Number(e.target.value))} className="w-full accent-purple-600 h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer"/>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                     <span className="text-sm text-slate-700 flex items-center gap-2"><Eraser size={16}/> Usuń białe tło</span>
+                     <button 
+                        onClick={() => setRemoveWhiteBg(!removeWhiteBg)}
+                        className={`w-10 h-6 rounded-full transition-colors relative ${removeWhiteBg ? 'bg-purple-600' : 'bg-slate-300'}`}
+                     >
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${removeWhiteBg ? 'left-5' : 'left-1'}`}></div>
+                     </button>
+                  </div>
+               </div>
             </div>
           )}
+        </div>
 
+        {/* PRAWA KOLUMNA - STUDIO (PODGLĄD) */}
+        <div className="lg:col-span-8">
+           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden h-full flex flex-col">
+              <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+                 <h2 className="font-semibold text-slate-700 flex items-center gap-2">
+                     <ImageIcon size={18} className="text-purple-600"/> Studio 
+                     {generatorSource === 'google' && backgroundImage && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-2">Powered by Google Imagen</span>}
+                 </h2>
+                 <button onClick={handleDownloadComposite} className="text-xs bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 font-medium flex gap-2"><Download size={14}/> Pobierz Gotowe</button>
+              </div>
+              
+              <div className="flex-1 bg-slate-100 relative flex items-center justify-center overflow-hidden p-8 min-h-[500px]">
+                 
+                 {/* CANVAS AREA */}
+                 <div className="relative w-full max-w-[500px] aspect-square bg-white shadow-2xl rounded-sm overflow-hidden group">
+                    {/* WARSTWA 1: TŁO */}
+                    {backgroundImage ? (
+                       <img src={backgroundImage} className="absolute inset-0 w-full h-full object-cover" alt="background" />
+                    ) : (
+                       <div className="absolute inset-0 bg-slate-50 flex items-center justify-center text-slate-300">
+                          <ImageIcon size={48} />
+                       </div>
+                    )}
+
+                    {/* WARSTWA 2: PRODUKT */}
+                    {uploadedImage && (
+                       <img 
+                          src={uploadedImage} 
+                          alt="product"
+                          className="absolute transition-all duration-75 select-none"
+                          style={{
+                             width: `${productScale}%`,
+                             left: '50%',
+                             top: `${productY}%`,
+                             transform: 'translate(-50%, -50%)',
+                             mixBlendMode: removeWhiteBg ? 'multiply' : 'normal'
+                          }} 
+                       />
+                    )}
+
+                    {/* Overlay Grid */}
+                    <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-10 transition-opacity">
+                       <div className="w-full h-full border border-slate-900 grid grid-cols-3 grid-rows-3">
+                          {[...Array(9)].map((_,i) => <div key={i} className="border border-slate-500/20"></div>)}
+                       </div>
+                    </div>
+                 </div>
+              </div>
+
+              {/* Sekcja Copywritingu */}
+              {postCaption && (
+                 <div className="p-4 bg-white border-t border-slate-100">
+                    <div className="flex justify-between items-center mb-2">
+                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Sugerowany Opis</span>
+                       <button onClick={() => {navigator.clipboard.writeText(postCaption); alert('Skopiowano!')}} className="text-purple-600 hover:text-purple-800"><Copy size={16}/></button>
+                    </div>
+                    <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">{postCaption}</p>
+                 </div>
+              )}
+           </div>
         </div>
       </main>
     </div>
