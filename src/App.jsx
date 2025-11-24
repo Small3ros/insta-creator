@@ -110,6 +110,7 @@ const InstaCreator = () => {
       const base64Data = imageBase64.split(',')[1]; 
       const mimeType = imageBase64.split(';')[0].split(':')[1];
 
+      // Używamy Gemini 1.5 Flash do analizy (to zazwyczaj działa dobrze na darmowych kluczach)
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -159,10 +160,11 @@ const InstaCreator = () => {
       const activeKey = apiKey || defaultApiKey;
       let imageUrl = null;
 
-      // KROK A: Próba użycia Google Imagen 3
+      // KROK A: Próba użycia Google Imagen (Wersja 2.0 - starsza, bardziej dostępna)
       if (activeKey) {
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${activeKey}`, {
+            // ZMIANA: Przełączenie na imagen-2.0-generate-001
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-2.0-generate-001:predict?key=${activeKey}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -177,7 +179,7 @@ const InstaCreator = () => {
                     imageUrl = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
                 }
             } else {
-                console.warn("Google Imagen niedostępny/błąd, przełączanie na zapasowy...");
+                console.warn("Google Imagen 2.0 niedostępny/błąd, przełączanie na zapasowy...");
                 throw new Error("Imagen fail"); 
             }
         } catch (err) {
@@ -321,7 +323,7 @@ const InstaCreator = () => {
              {generatorSource === 'pollinations' && backgroundImage && !isGenerating && (
                  <div className="mt-2 text-[10px] text-amber-600 bg-amber-50 p-2 rounded border border-amber-100 flex gap-2">
                      <AlertCircle size={12} className="shrink-0 mt-0.5"/>
-                     Twoje klucz API Google nie obsługuje jeszcze generowania obrazów (Błąd 404). Użyto zapasowego generatora.
+                     Twoje klucz API Google nie obsługuje generowania obrazów (Błąd dostępu). Użyto zapasowego generatora.
                  </div>
              )}
           </div>
@@ -360,7 +362,7 @@ const InstaCreator = () => {
               <div className="p-4 border-b border-slate-100 flex justify-between items-center">
                  <h2 className="font-semibold text-slate-700 flex items-center gap-2">
                      <ImageIcon size={18} className="text-purple-600"/> Studio 
-                     {generatorSource === 'google' && backgroundImage && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-2">Powered by Google Imagen</span>}
+                     {generatorSource === 'google' && backgroundImage && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-2">Powered by Google Imagen 2</span>}
                  </h2>
                  <button onClick={handleDownloadComposite} className="text-xs bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 font-medium flex gap-2"><Download size={14}/> Pobierz Gotowe</button>
               </div>
