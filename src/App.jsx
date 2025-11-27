@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Check, Loader2, ArrowRight, RefreshCcw, Download, Wand2, Camera, Sun, Armchair, ImageIcon, Building, AlertCircle, Eraser, Move, Layers, XCircle, Info, Sparkles, Smartphone, Box, Zap } from 'lucide-react';
+// POPRAWKA: Dodano brakujący import CheckCircle2
+import { Upload, Check, Loader2, ArrowRight, RefreshCcw, Download, Wand2, Camera, Sun, Armchair, ImageIcon, Building, AlertCircle, Eraser, Move, Layers, XCircle, Info, Sparkles, Smartphone, Box, Zap, CheckCircle2 } from 'lucide-react';
 
 const AIProductStudio = () => {
   // --- KONFIGURACJA KLUCZA API ---
@@ -170,9 +171,10 @@ const AIProductStudio = () => {
       
       const { imageUrl, modelName } = await generateImageWithGooglePriority(prompt);
       
-      // Preload
+      // Preload z CORS (ważne!)
       await new Promise((resolve, reject) => {
         const img = new Image();
+        img.crossOrigin = "anonymous"; // Naprawa CORS
         img.onload = resolve;
         img.onerror = reject;
         img.src = imageUrl;
@@ -207,13 +209,15 @@ const AIProductStudio = () => {
         const { imageUrl: bgImageUrl, modelName } = await generateImageWithGooglePriority(selectedStylePrompt);
         setUsedModel(modelName);
         
-        // Czekamy na załadowanie tła
+        // Czekamy na załadowanie tła (z CORS)
         const bgImg = await new Promise((resolve, reject) => {
             const img = new Image();
             img.crossOrigin = "anonymous";
             img.onload = () => resolve(img);
             img.onerror = reject;
-            img.src = bgImageUrl;
+            // Cache buster dla tła
+            const src = bgImageUrl.startsWith('http') ? `${bgImageUrl}${bgImageUrl.includes('?') ? '&' : '?'}t=${Date.now()}` : bgImageUrl;
+            img.src = src;
         });
         
         setProcessingStatus('Składanie kompozycji...');
@@ -227,13 +231,15 @@ const AIProductStudio = () => {
         // Rysuj tło
         ctx.drawImage(bgImg, 0, 0, 1080, 1080);
 
-        // Ładujemy produkt
+        // Ładujemy produkt (z CORS i cache busterem)
         const prodImg = await new Promise((resolve, reject) => {
             const img = new Image();
             img.crossOrigin = "anonymous";
             img.onload = () => resolve(img);
             img.onerror = reject;
-            img.src = uploadedImage;
+            // Dodajemy parametr czasu, aby ominąć cache przeglądarki (fix dla "Tainted Canvas")
+            const src = uploadedImage.startsWith('http') ? `${uploadedImage}${uploadedImage.includes('?') ? '&' : '?'}t=${Date.now()}` : uploadedImage;
+            img.src = src;
         });
 
         const targetScale = 0.70;
@@ -254,8 +260,8 @@ const AIProductStudio = () => {
         setStep(3);
         
     } catch (err) {
-        console.error(err);
-        setError('Wystąpił błąd podczas generowania. Spróbuj ponownie.');
+        console.error("Szczegóły błędu:", err);
+        setError(`Wystąpił błąd: ${err.message || 'Problem z grafiką'}`);
     } finally {
       setIsProcessing(false);
       setProcessingStatus('');
