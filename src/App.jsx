@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Check, Loader2, ArrowRight, RefreshCcw, Download, Wand2, Camera, Sun, Armchair, ImageIcon, Building, AlertCircle, Eraser, Move, Layers, XCircle, Info } from 'lucide-react';
+import { Upload, Check, Loader2, ArrowRight, RefreshCcw, Download, Wand2, Camera, Sun, Armchair, ImageIcon, Building, AlertCircle, Eraser, Move, Layers, XCircle, Info, Sparkles, Smartphone, Box, Zap } from 'lucide-react';
 
 const AIProductStudio = () => {
   // --- KONFIGURACJA KLUCZA API ---
@@ -20,19 +20,15 @@ const AIProductStudio = () => {
   const [uploadedImage, setUploadedImage] = useState(null);
   const [selectedStyleIndex, setSelectedStyleIndex] = useState(null);
   
-  // Dane wyjściowe
-  const [backgroundImage, setBackgroundImage] = useState(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  // Tryby i Statusy
+  const [isPackshotMode, setIsPackshotMode] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [usedModel, setUsedModel] = useState(''); // Informacja jaki model został użyty
   
-  // Statusy i błędy API
-  const [generatorSource, setGeneratorSource] = useState(''); // 'google' | 'pollinations'
-  const [apiDebugInfo, setApiDebugInfo] = useState(''); // Dokładny komunikat błędu od Google
+  // Wynik końcowy
+  const [finalCompositeImage, setFinalCompositeImage] = useState(null);
   const [error, setError] = useState('');
-
-  // Ustawienia kompozycji (Edycja w Kroku 3)
-  const [productScale, setProductScale] = useState(70);
-  const [productY, setProductY] = useState(50);
-  const [removeWhiteBg, setRemoveWhiteBg] = useState(true);
 
   const fileInputRef = useRef(null);
 
@@ -75,141 +71,204 @@ const AIProductStudio = () => {
       reader.onloadend = () => {
         setUploadedImage(reader.result);
         setError('');
+        setIsPackshotMode(false);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleGenerate = async () => {
-    if (!uploadedImage || selectedStyleIndex === null) return;
+  // --- HELPER: GENEROWANIE OBRAZU Z PRIORYTETEM GOOGLE ---
+  const generateImageWithGooglePriority = async (prompt) => {
+    let imageUrl = null;
+    let modelName = 'Flux (Darmowy)';
 
-    setIsGenerating(true);
-    setError('');
-    setApiDebugInfo(''); // Reset błędów
-    setBackgroundImage(null);
-    setGeneratorSource('');
+    if (apiKey) {
+        // 1. Próba: Imagen 3 (Najwyższa jakość)
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    instances: [{ prompt }],
+                    parameters: { sampleCount: 1, aspectRatio: "1:1" }
+                })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.predictions?.[0]?.bytesBase64Encoded) {
+                    imageUrl = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+                    modelName = 'Google Imagen 3 (Pro)';
+                }
+            }
+        } catch (e) { console.log('Imagen 3 nie powiódł się, próbuję starszy...'); }
 
-    const selectedStylePrompt = styles[selectedStyleIndex].prompt;
-    
-    try {
-        let imageUrl = null;
-        let source = 'pollinations'; // Domyślnie zakładamy fallback
-        let debugMsg = '';
-
-        // --- PRÓBA 1: GOOGLE IMAGEN ---
-        if (apiKey) {
+        // 2. Próba: Imagen 2 (Wysoka kompatybilność) - tylko jeśli Imagen 3 zawiódł
+        if (!imageUrl) {
             try {
-                // Używamy modelu Imagen 2.0
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-2.0-generate-001:predict?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        instances: [{ prompt: selectedStylePrompt }],
+                        instances: [{ prompt }],
                         parameters: { sampleCount: 1, aspectRatio: "1:1" }
                     })
                 });
-
                 if (response.ok) {
                     const data = await response.json();
                     if (data.predictions?.[0]?.bytesBase64Encoded) {
                         imageUrl = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
-                        source = 'google';
+                        modelName = 'Google Imagen 2';
                     }
-                } else {
-                    // Pobieramy dokładny błąd od Google
-                    const errData = await response.json().catch(() => ({}));
-                    const status = response.status;
-                    const message = errData.error?.message || response.statusText;
-                    debugMsg = `Google API Błąd ${status}: ${message}`;
-                    console.warn(debugMsg);
                 }
-            } catch (googleErr) {
-                debugMsg = `Błąd połączenia: ${googleErr.message}`;
-                console.error("Błąd połączenia z Google:", googleErr);
-            }
-        } else {
-            debugMsg = "Pominięto Google API: Brak klucza w konfiguracji.";
+            } catch (e) { console.log('Imagen 2 nie powiódł się.'); }
         }
+    }
 
-        // --- PRÓBA 2: POLLINATIONS (Fallback) ---
-        if (!imageUrl) {
-            // Jeśli nie mamy obrazu, ustawiamy info o błędzie Google, żeby wyświetlić użytkownikowi
-            setApiDebugInfo(debugMsg);
-            
-            const seed = Math.floor(Math.random() * 1000000);
-            const encodedPrompt = encodeURIComponent(selectedStylePrompt);
-            imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&width=1024&height=1024&nologo=true&model=flux`;
-            source = 'pollinations';
-        }
-        
-        // Ładowanie obrazu (Preload)
-        await new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = resolve;
-            img.onerror = reject;
-            img.src = imageUrl;
-        });
-        
-        setBackgroundImage(imageUrl);
-        setGeneratorSource(source);
-        setStep(3);
-        
+    // 3. Fallback: Pollinations (Gdy Google zawiedzie)
+    if (!imageUrl) {
+        const seed = Math.floor(Math.random() * 1000000);
+        const encodedPrompt = encodeURIComponent(prompt);
+        imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&width=1080&height=1080&nologo=true&model=flux&enhance=false`;
+    }
+
+    return { imageUrl, modelName };
+  };
+
+
+  // --- FUNKCJA: PRZERÓB NA PACKSHOT ---
+  const handleConvertToPackshot = async () => {
+    if (!uploadedImage || !apiKey) {
+      setError("Potrzebny jest klucz API Google do analizy zdjęcia.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessingStatus('Analizuję produkt (Gemini Vision)...');
+    
+    try {
+      // 1. Analiza obrazu
+      const base64Data = uploadedImage.split(',')[1];
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: "Describe this object in detail (color, shape, material) for a product photography prompt. Keep it concise, e.g. 'A black ceramic coffee mug'." },
+              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+            ]
+          }]
+        })
+      });
+
+      const data = await response.json();
+      const description = data.candidates?.[0]?.content?.parts?.[0]?.text || "product";
+
+      // 2. Generowanie packshotu
+      setProcessingStatus('Generuję packshot wysokiej jakości...');
+      const prompt = `Professional product photography of ${description}, isolated on pure white background, studio lighting, 8k, sharp focus, centered, full shot.`;
+      
+      const { imageUrl, modelName } = await generateImageWithGooglePriority(prompt);
+      
+      // Preload
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = imageUrl;
+      });
+
+      setUploadedImage(imageUrl);
+      setIsPackshotMode(true);
+      setUsedModel(modelName);
+      setProcessingStatus('');
+
     } catch (err) {
-        console.error(err);
-        setError('Nie udało się wygenerować tła. Sprawdź połączenie.');
+      console.error(err);
+      setError("Nie udało się przerobić zdjęcia. Sprawdź klucz API.");
     } finally {
-      setIsGenerating(false);
+      setIsProcessing(false);
     }
   };
 
-  const handleDownloadComposite = () => {
-    if (!uploadedImage || !backgroundImage) return;
+  // --- FUNKCJA GŁÓWNA: GENERUJ I SCAL ---
+  const handleGenerate = async () => {
+    if (!uploadedImage || selectedStyleIndex === null) return;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = 1080;
-    canvas.height = 1080;
-    const ctx = canvas.getContext('2d');
+    setIsProcessing(true);
+    setProcessingStatus('Generuję fotorealistyczne tło...');
+    setError('');
+    setFinalCompositeImage(null);
 
-    const bgImg = new Image();
-    bgImg.crossOrigin = "anonymous";
-    bgImg.src = backgroundImage;
+    const selectedStylePrompt = styles[selectedStyleIndex].prompt;
+    
+    try {
+        // 1. Generujemy TŁO
+        const { imageUrl: bgImageUrl, modelName } = await generateImageWithGooglePriority(selectedStylePrompt);
+        setUsedModel(modelName);
+        
+        // Czekamy na załadowanie tła
+        const bgImg = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = bgImageUrl;
+        });
+        
+        setProcessingStatus('Składanie kompozycji...');
 
-    bgImg.onload = () => {
-      ctx.drawImage(bgImg, 0, 0, 1080, 1080);
+        // 2. AUTOMATYCZNE SCALANIE
+        const canvas = document.createElement('canvas');
+        canvas.width = 1080;
+        canvas.height = 1080;
+        const ctx = canvas.getContext('2d');
 
-      const prodImg = new Image();
-      prodImg.src = uploadedImage;
-      prodImg.onload = () => {
-        const scale = productScale / 100;
-        const w = 1080 * scale; 
+        // Rysuj tło
+        ctx.drawImage(bgImg, 0, 0, 1080, 1080);
+
+        // Ładujemy produkt
+        const prodImg = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = uploadedImage;
+        });
+
+        const targetScale = 0.70;
+        const w = 1080 * targetScale; 
         const ratio = prodImg.width / prodImg.height;
         const drawH = w / ratio; 
         
         const x = (1080 - w) / 2;
-        const y = (1080 * (productY / 100)) - (drawH / 2);
+        const y = (1080 - drawH) / 2 + 50;
 
-        if (removeWhiteBg) {
-            ctx.globalCompositeOperation = 'multiply';
-        }
-
+        // Tryb mieszania dla packshotów
+        ctx.globalCompositeOperation = 'multiply';
         ctx.drawImage(prodImg, x, y, w, drawH);
         ctx.globalCompositeOperation = 'source-over';
 
-        const link = document.createElement('a');
-        link.download = `notato-studio-${Date.now()}.jpg`;
-        link.href = canvas.toDataURL('image/jpeg', 0.9);
-        link.click();
-      };
-    };
+        const finalUrl = canvas.toDataURL('image/jpeg', 0.95);
+        setFinalCompositeImage(finalUrl);
+        setStep(3);
+        
+    } catch (err) {
+        console.error(err);
+        setError('Wystąpił błąd podczas generowania. Spróbuj ponownie.');
+    } finally {
+      setIsProcessing(false);
+      setProcessingStatus('');
+    }
   };
 
   const resetProcess = () => {
     setStep(1);
-    setBackgroundImage(null);
+    setFinalCompositeImage(null);
     setUploadedImage(null);
     setSelectedStyleIndex(null);
-    setProductScale(70);
-    setProductY(50);
+    setIsPackshotMode(false);
+    setUsedModel('');
   };
 
   return (
@@ -227,19 +286,11 @@ const AIProductStudio = () => {
             </h1>
           </div>
           <div className="flex items-center gap-4">
-             {/* Wskaźnik statusu API */}
-             {apiKey ? (
+             {apiKey && (
                 <div className="hidden sm:flex items-center gap-1.5 text-xs text-green-700 bg-green-50 px-3 py-1.5 rounded-full border border-green-200 font-medium">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    Gemini API: Aktywne
-                </div>
-             ) : (
-                <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 font-medium">
-                    <div className="w-2 h-2 rounded-full bg-slate-400"></div>
-                    Gemini API: Brak Klucza (Tryb Demo)
+                    <Check size={12} /> API Płatne (Pro)
                 </div>
              )}
-             
              <div className="text-sm text-slate-500 font-medium border-l pl-4 ml-2">
                Krok {step} z 3
              </div>
@@ -253,8 +304,8 @@ const AIProductStudio = () => {
         {step === 1 && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold text-slate-900 mb-2">Wgraj swój produkt</h2>
-              <p className="text-slate-500">Wgraj packshot (produkt na białym tle). System usunie białe tło automatycznie.</p>
+              <h2 className="text-3xl font-bold text-slate-900 mb-2">Wgraj produkt</h2>
+              <p className="text-slate-500">Wgraj zdjęcie. System obsługuje packshoty oraz zdjęcia z telefonu.</p>
             </div>
 
             <div 
@@ -296,27 +347,58 @@ const AIProductStudio = () => {
               ) : (
                 <div className="relative group">
                   <img src={uploadedImage} alt="Uploaded" className="max-h-96 mx-auto rounded-lg shadow-lg object-contain bg-white" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                  
+                  {isProcessing && (
+                     <div className="absolute inset-0 bg-white/90 flex flex-col items-center justify-center z-10">
+                        <Loader2 className="animate-spin text-blue-600 mb-2" size={32} />
+                        <span className="text-sm font-medium text-blue-800">{processingStatus}</span>
+                     </div>
+                  )}
+
+                  <div className="absolute top-2 right-2">
                     <button 
                       onClick={() => setUploadedImage(null)}
-                      className="bg-white/90 text-red-600 px-4 py-2 rounded-full font-medium hover:bg-white transition-colors"
+                      className="bg-white/90 text-red-600 p-2 rounded-full hover:bg-white shadow-sm"
+                      title="Usuń"
                     >
-                      Usuń zdjęcie
+                      <XCircle size={20} />
                     </button>
                   </div>
                 </div>
               )}
             </div>
 
-            {uploadedImage && (
-              <div className="mt-8 flex justify-end">
+            {uploadedImage && !isProcessing && (
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                    {!isPackshotMode ? (
+                        <button 
+                            onClick={handleConvertToPackshot}
+                            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium border border-indigo-100"
+                        >
+                            <Sparkles size={16} /> Wyczyść tło (AI Packshot)
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2 text-green-600 text-sm font-medium px-4 py-2 bg-green-50 rounded-lg">
+                            <CheckCircle2 size={16} /> Tło wyczyszczone
+                        </div>
+                    )}
+                </div>
+
                 <button 
                   onClick={() => setStep(2)}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-semibold transition-all shadow-md hover:shadow-lg transform active:scale-95"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-semibold transition-all shadow-md hover:shadow-lg transform active:scale-95"
                 >
                   Dalej <ArrowRight size={18} />
                 </button>
               </div>
+            )}
+            
+            {error && (
+                <div className="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm text-center border border-red-100">
+                    {error}
+                </div>
             )}
           </div>
         )}
@@ -328,8 +410,8 @@ const AIProductStudio = () => {
                <ArrowRight className="rotate-180" size={16} /> Wróć do zdjęcia
             </div>
             
-            <h2 className="text-3xl font-bold text-slate-900 mb-2 text-center">Wybierz styl aranżacji</h2>
-            <p className="text-slate-500 text-center mb-8">AI wygeneruje tło, na którym umieścimy Twój produkt.</p>
+            <h2 className="text-3xl font-bold text-slate-900 mb-2 text-center">Gdzie robimy sesję?</h2>
+            <p className="text-slate-500 text-center mb-8">Wybierz scenerię. Wykorzystamy najlepsze modele AI.</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               {styles.map((style, index) => (
@@ -358,20 +440,20 @@ const AIProductStudio = () => {
 
             <button 
               onClick={handleGenerate}
-              disabled={selectedStyleIndex === null || isGenerating}
+              disabled={selectedStyleIndex === null || isProcessing}
               className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg ${
-                selectedStyleIndex !== null && !isGenerating
+                selectedStyleIndex !== null && !isProcessing
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-[1.02] active:scale-[0.98]' 
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}
             >
-              {isGenerating ? (
+              {isProcessing ? (
                 <>
-                  <Loader2 className="animate-spin" /> Generowanie tła...
+                  <Loader2 className="animate-spin" /> {processingStatus}
                 </>
               ) : (
                 <>
-                  <Wand2 size={20} /> Stwórz studio
+                  <Wand2 size={20} /> Generuj sesję (Pro)
                 </>
               )}
             </button>
@@ -384,128 +466,46 @@ const AIProductStudio = () => {
           </div>
         )}
 
-        {/* Krok 3: Wynik i Edycja */}
-        {step === 3 && backgroundImage && (
+        {/* Krok 3: Wynik */}
+        {step === 3 && finalCompositeImage && (
           <div className="animate-in fade-in zoom-in duration-500">
             <h2 className="text-2xl font-bold text-slate-900 mb-2 text-center">Twoje Studio</h2>
             
-            {/* Informacja o źródle generowania i ewentualnych błędach */}
-            <div className="flex justify-center mb-4">
-                {generatorSource === 'google' ? (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                        <Layers size={12} /> Generowane przez Google Imagen 2
-                    </span>
-                ) : (
-                    <div className="flex flex-col items-center gap-1">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-                            <Info size={12} /> Tło: Flux (Fallback)
-                        </span>
-                        {apiDebugInfo && (
-                             <span className="text-[10px] text-red-500 max-w-md text-center">
-                                 Powód: {apiDebugInfo}
-                             </span>
-                        )}
-                    </div>
-                )}
+            <div className="flex justify-center items-center gap-2 mb-6">
+                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded-full flex items-center gap-1">
+                   <Zap size={12} className={usedModel.includes('Google') ? 'text-green-500' : 'text-amber-500'} fill="currentColor"/> 
+                   Wygenerowano przez: {usedModel}
+                </span>
             </div>
 
-            {/* Obszar roboczy */}
-            <div className="bg-white p-2 rounded-2xl shadow-xl border border-slate-200 mb-6 relative overflow-hidden group">
-               {/* Kontener 1:1 */}
+            <div className="bg-white p-2 rounded-2xl shadow-xl border border-slate-200 mb-8 max-w-lg mx-auto">
                <div className="relative w-full aspect-square bg-slate-100 rounded-xl overflow-hidden">
-                  
-                  {/* Warstwa 1: Tło */}
                   <img 
-                    src={backgroundImage} 
-                    alt="Background" 
-                    className="absolute inset-0 w-full h-full object-cover"
+                    src={finalCompositeImage} 
+                    alt="Final Studio Result" 
+                    className="w-full h-full object-cover"
                   />
-
-                  {/* Warstwa 2: Produkt */}
-                  {uploadedImage && (
-                    <img 
-                        src={uploadedImage} 
-                        alt="Product"
-                        className="absolute transition-all duration-75 cursor-move"
-                        style={{
-                            width: `${productScale}%`,
-                            left: '50%',
-                            top: `${productY}%`,
-                            transform: 'translate(-50%, -50%)',
-                            mixBlendMode: removeWhiteBg ? 'multiply' : 'normal'
-                        }}
-                    />
-                  )}
                </div>
             </div>
 
-            {/* Panel Sterowania */}
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
-                <div className="flex items-center gap-2 mb-4 text-slate-700 font-semibold">
-                    <Move size={18} className="text-blue-600"/> Dopasuj produkt
-                </div>
-                
-                <div className="space-y-6">
-                    <div>
-                        <label className="text-xs text-slate-500 font-medium flex justify-between mb-2">
-                            Wielkość <span>{productScale}%</span>
-                        </label>
-                        <input 
-                            type="range" 
-                            min="10" 
-                            max="150" 
-                            value={productScale} 
-                            onChange={(e) => setProductScale(Number(e.target.value))} 
-                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                        />
-                    </div>
-                    
-                    <div>
-                        <label className="text-xs text-slate-500 font-medium flex justify-between mb-2">
-                            Pozycja (Góra-Dół)
-                        </label>
-                        <input 
-                            type="range" 
-                            min="0" 
-                            max="100" 
-                            value={productY} 
-                            onChange={(e) => setProductY(Number(e.target.value))} 
-                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                        />
-                    </div>
-
-                    <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                        <div className="flex items-center gap-2 text-sm text-slate-700">
-                            <Eraser size={16} /> 
-                            <span>Usuń białe tło (Tryb Multiply)</span>
-                        </div>
-                        <button 
-                            onClick={() => setRemoveWhiteBg(!removeWhiteBg)}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${removeWhiteBg ? 'bg-blue-600' : 'bg-slate-300'}`}
-                        >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${removeWhiteBg ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
-                </div>
-            </div>
-
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button 
-                onClick={handleDownloadComposite}
-                className="flex items-center justify-center gap-2 bg-slate-900 text-white px-6 py-3 rounded-xl font-semibold hover:bg-slate-800 transition-colors shadow-lg hover:scale-105 transform duration-200"
+              <a 
+                href={finalCompositeImage}
+                download={`notato-studio-${Date.now()}.jpg`}
+                className="flex items-center justify-center gap-2 bg-slate-900 text-white px-8 py-4 rounded-xl font-semibold hover:bg-slate-800 transition-colors shadow-lg hover:scale-105 transform duration-200"
               >
-                <Download size={18} /> Pobierz gotowe zdjęcie
-              </button>
+                <Download size={18} /> Pobierz zdjęcie
+              </a>
               <button 
                 onClick={resetProcess}
-                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-6 py-3 rounded-xl font-semibold hover:bg-slate-50 transition-colors"
+                className="flex items-center justify-center gap-2 bg-white border border-slate-300 text-slate-700 px-6 py-4 rounded-xl font-semibold hover:bg-slate-50 transition-colors"
               >
                 <RefreshCcw size={18} /> Zacznij od nowa
               </button>
             </div>
             
             <div className="mt-8 text-center">
-               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Wygenerowane tło</p>
+               <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Użyty styl</p>
                <p className="text-sm text-slate-500 mt-2 italic">
                  {styles[selectedStyleIndex].title}
                </p>
